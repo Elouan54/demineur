@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:demineur/services/sound_service.dart';
 import 'package:flutter/material.dart';
 
 import '../models/cell.dart';
@@ -24,6 +25,8 @@ class _GameScreenState extends State<GameScreen> {
   late List<List<Cell>> grid;
   late Timer timer;
 
+  String smiley = "🙂";
+
   bool firstClick = true;
 
   int seconds = 0;
@@ -42,6 +45,9 @@ class _GameScreenState extends State<GameScreen> {
     super.dispose();
   }
 
+  // =========================
+  // INIT GAME
+  // =========================
   void initGame() {
     timer = Timer.periodic(const Duration(seconds: 1), (_) {
       setState(() {
@@ -50,7 +56,6 @@ class _GameScreenState extends State<GameScreen> {
     });
 
     firstClick = true;
-
     seconds = 0;
     flagsPlaced = 0;
     gameOver = false;
@@ -64,6 +69,18 @@ class _GameScreenState extends State<GameScreen> {
     calculateNumbers();
   }
 
+  // =========================
+  // SMILEY
+  // =========================
+  void updateSmiley(String state) {
+    setState(() {
+      smiley = state;
+    });
+  }
+
+  // =========================
+  // MINES
+  // =========================
   void placeMines() {
     final random = Random();
     int placed = 0;
@@ -80,7 +97,6 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void resetMines(int safeRow, int safeCol) {
-    // reset grille
     for (var row in grid) {
       for (var cell in row) {
         cell.hasMine = false;
@@ -95,7 +111,6 @@ class _GameScreenState extends State<GameScreen> {
       int row = random.nextInt(widget.gridSize);
       int col = random.nextInt(widget.gridSize);
 
-      // interdit sur la case du premier clic
       if ((row == safeRow && col == safeCol) || grid[row][col].hasMine) {
         continue;
       }
@@ -116,14 +131,14 @@ class _GameScreenState extends State<GameScreen> {
 
         for (int i = -1; i <= 1; i++) {
           for (int j = -1; j <= 1; j++) {
-            int newRow = row + i;
-            int newCol = col + j;
+            int r = row + i;
+            int c = col + j;
 
-            if (newRow >= 0 &&
-                newRow < widget.gridSize &&
-                newCol >= 0 &&
-                newCol < widget.gridSize &&
-                grid[newRow][newCol].hasMine) {
+            if (r >= 0 &&
+                r < widget.gridSize &&
+                c >= 0 &&
+                c < widget.gridSize &&
+                grid[r][c].hasMine) {
               count++;
             }
           }
@@ -134,63 +149,138 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
+  // =========================
+  // REVEAL NORMAL
+  // =========================
   void revealCell(int row, int col) {
     final cell = grid[row][col];
+
+    updateSmiley("😮");
+
+    // 💥 CHORD
+    if (cell.revealed) {
+      chordCell(row, col);
+      return;
+    }
 
     if (firstClick) {
       firstClick = false;
 
-      // si mine au premier clic
       if (cell.hasMine) {
         resetMines(row, col);
       }
     }
 
-    if (cell.revealed || cell.flagged || gameOver) return;
+    if (cell.flagged || gameOver) return;
 
     setState(() {
       cell.revealed = true;
 
-      // 💣 Mine touchée
+      SoundService.playClick();
+
       if (cell.hasMine) {
+        SoundService.playBoom();
         revealAllMines();
         gameOver = true;
         showGameOver();
         return;
       }
 
-      // 🔄 propagation des cases vides
       if (cell.nearbyMines == 0) {
         revealEmptyCells(row, col);
       }
+
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (!gameOver) updateSmiley("🙂");
+      });
 
       checkWin();
     });
   }
 
+  // =========================
+  // CHORD SYSTEM
+  // =========================
+  void chordCell(int row, int col) {
+    final cell = grid[row][col];
+
+    if (!cell.revealed || cell.nearbyMines == 0) return;
+
+    int flags = countFlagsAround(row, col);
+
+    if (flags != cell.nearbyMines) return;
+
+    for (int i = -1; i <= 1; i++) {
+      for (int j = -1; j <= 1; j++) {
+        int r = row + i;
+        int c = col + j;
+
+        if (r < 0 || r >= widget.gridSize || c < 0 || c >= widget.gridSize)
+          continue;
+
+        final neighbor = grid[r][c];
+
+        if (neighbor.revealed || neighbor.flagged) continue;
+
+        neighbor.revealed = true;
+
+        if (neighbor.hasMine) {
+          SoundService.playBoom();
+          revealAllMines();
+          gameOver = true;
+          showGameOver();
+          return;
+        }
+
+        if (neighbor.nearbyMines == 0) {
+          revealEmptyCells(r, c);
+        }
+      }
+    }
+
+    checkWin();
+  }
+
+  int countFlagsAround(int row, int col) {
+    int count = 0;
+
+    for (int i = -1; i <= 1; i++) {
+      for (int j = -1; j <= 1; j++) {
+        int r = row + i;
+        int c = col + j;
+
+        if (r < 0 || r >= widget.gridSize || c < 0 || c >= widget.gridSize)
+          continue;
+
+        if (grid[r][c].flagged) {
+          count++;
+        }
+      }
+    }
+
+    return count;
+  }
+
+  // =========================
+  // EMPTY REVEAL
+  // =========================
   void revealEmptyCells(int row, int col) {
     for (int i = -1; i <= 1; i++) {
       for (int j = -1; j <= 1; j++) {
-        int newRow = row + i;
-        int newCol = col + j;
+        int r = row + i;
+        int c = col + j;
 
-        if (newRow < 0 ||
-            newRow >= widget.gridSize ||
-            newCol < 0 ||
-            newCol >= widget.gridSize) {
+        if (r < 0 || r >= widget.gridSize || c < 0 || c >= widget.gridSize)
           continue;
-        }
 
-        final neighbor = grid[newRow][newCol];
+        final neighbor = grid[r][c];
 
-        if (neighbor.revealed || neighbor.flagged) {
-          continue;
-        }
+        if (neighbor.revealed || neighbor.flagged) continue;
 
         neighbor.revealed = true;
 
         if (neighbor.nearbyMines == 0 && !neighbor.hasMine) {
-          revealEmptyCells(newRow, newCol);
+          revealEmptyCells(r, c);
         }
       }
     }
@@ -206,6 +296,9 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
+  // =========================
+  // WIN / LOSE
+  // =========================
   void checkWin() {
     int revealedCount = 0;
 
@@ -227,6 +320,8 @@ class _GameScreenState extends State<GameScreen> {
 
   void showWinDialog() {
     timer.cancel();
+    SoundService.playWin();
+    updateSmiley("😎");
 
     showDialog(
       context: context,
@@ -238,10 +333,7 @@ class _GameScreenState extends State<GameScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-
-              setState(() {
-                initGame();
-              });
+              setState(() => initGame());
             },
             child: const Text("Rejouer"),
           ),
@@ -252,6 +344,7 @@ class _GameScreenState extends State<GameScreen> {
 
   void showGameOver() {
     timer.cancel();
+    updateSmiley("😵");
 
     showDialog(
       context: context,
@@ -263,10 +356,7 @@ class _GameScreenState extends State<GameScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-
-              setState(() {
-                initGame();
-              });
+              setState(() => initGame());
             },
             child: const Text("Rejouer"),
           ),
@@ -275,6 +365,9 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+  // =========================
+  // FLAGS
+  // =========================
   void toggleFlag(int row, int col) {
     if (gameOver) return;
 
@@ -282,6 +375,8 @@ class _GameScreenState extends State<GameScreen> {
       final cell = grid[row][col];
 
       if (cell.revealed) return;
+
+      SoundService.playFlag();
 
       cell.flagged = !cell.flagged;
 
@@ -293,6 +388,9 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
+  // =========================
+  // UI
+  // =========================
   Widget buildXPDisplay(int value) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -317,7 +415,6 @@ class _GameScreenState extends State<GameScreen> {
       appBar: AppBar(title: const Text('Démineur'), centerTitle: true),
       body: Column(
         children: [
-          // 🪟 Barre XP
           Container(
             margin: const EdgeInsets.all(12),
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -331,14 +428,14 @@ class _GameScreenState extends State<GameScreen> {
                 buildXPDisplay(widget.mineCount - flagsPlaced),
 
                 GestureDetector(
+                  onTapDown: (_) => updateSmiley("😮"),
+                  onTapUp: (_) => updateSmiley("🙂"),
+                  onTapCancel: () => updateSmiley("🙂"),
                   onTap: () {
                     timer.cancel();
-
-                    setState(() {
-                      initGame();
-                    });
+                    setState(() => initGame());
                   },
-                  child: const Text("🙂", style: TextStyle(fontSize: 30)),
+                  child: Text(smiley, style: const TextStyle(fontSize: 30)),
                 ),
 
                 buildXPDisplay(seconds),
@@ -346,7 +443,6 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
 
-          // 🎮 Grille du jeu
           Expanded(
             child: Center(
               child: AspectRatio(
